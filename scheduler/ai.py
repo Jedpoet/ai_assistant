@@ -1,14 +1,15 @@
 import os
 import json
 from datetime import date, timedelta
-from anthropic import Anthropic
+from google import genai
+from google.genai import types
 from db.database import get_fixed_schedules, get_member
 from calendar.gcal import get_events_for_week
 from dotenv import load_dotenv
 
 load_dotenv()
 
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = genai.Client()
 
 DAY_NAMES = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
 
@@ -99,7 +100,7 @@ def parse_message(
     discord_id: str, user_message: str, conversation_history: list[dict]
 ) -> dict:
     """
-    呼叫 Claude 解析自然語言訊息，回傳 intent + 結構化資料。
+    呼叫 Gemini 解析自然語言訊息，回傳 intent + 結構化資料。
     conversation_history 格式：[{"role": "user"|"assistant", "content": "..."}]
     """
     member = get_member(discord_id)
@@ -122,15 +123,32 @@ def parse_message(
             },
         )
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1000,
-        system=SYSTEM_PROMPT,
-        messages=messages,
+    # 1. 轉換格式：將原生的 dict 陣列轉為 Gemini SDK 接受的 types.Content 陣列
+    gemini_messages = []
+    for msg in messages:
+        # 將 Claude 的 assistant 映射到 Gemini 的 model
+        role = "model" if msg["role"] == "assistant" else "user"
+        gemini_messages.append(
+            types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])])
+        )
+
+    # 2. 呼叫 Gemini API
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=gemini_messages,  # 放入轉換好的 gemini_messages
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            max_output_tokens=1000,
+            # 強制 Gemini 輸出純 JSON 格式，大幅減少格式錯誤的機率
+            response_mime_type="application/json",
+        ),
     )
 
-    raw = response.content[0].text.strip()
-    # 防禦性處理：有時模型會包一層 ```json ... ```
+    # 3. 取得文字回應：注意這裡是 response.text，不是 content[0].text
+    raw = response.text.strip()
+
+    # 防禦性處理：因為加了 JSON 模式，理論上不會有 markdown 標記了
+    # 但保留下來作為雙重保險也無妨
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
