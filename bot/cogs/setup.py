@@ -1,9 +1,18 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from db.database import upsert_member, get_member, get_all_members, update_preferences
-from calendar.gcal import create_family_calendar
-from db.database import update_calendar_id
+from db.database import (
+    upsert_member,
+    get_member,
+    get_member_by_name,
+    get_all_members,
+    update_preferences,
+    update_calendar_id,
+    add_fixed_schedule,
+)
+from gcal.gcal import create_family_calendar, add_event
+from scheduler.ai import parse_message
+from datetime import datetime
 
 MEMBER_COLORS = ["#4A90D9", "#E74C3C", "#2ECC71", "#F39C12", "#9B59B6"]
 
@@ -81,6 +90,101 @@ class SetupCog(commands.Cog):
         await interaction.response.send_message(
             f"✅ 偏好已更新：{text}", ephemeral=True
         )
+
+    @app_commands.command(
+        name="add_for",
+        description="幫其他家人新增行程（自然語言）",
+    )
+    @app_commands.describe(
+        member_name="目標家人的名字（例如：小明、媽媽）",
+        text="用自然語言描述行程（例如：明天下午三點補習兩小時）",
+    )
+    async def add_for(
+        self, interaction: discord.Interaction, member_name: str, text: str
+    ):
+        await interaction.response.defer()
+
+        discord_id = str(interaction.user.id)
+        caller = get_member(discord_id)
+        if not caller:
+            await interaction.followup.send("請先用 `/setup` 註冊。")
+            return
+
+        target = get_member_by_name(member_name)
+        if not target:
+            await interaction.followup.send(
+                f"❌ 找不到叫「{member_name}」的家人，請用 `/members` 確認名字。"
+            )
+            return
+
+        # 透過 AI 解析自然語言
+        combined_text = f"幫{member_name}{text}"
+        history = [{"role": "user", "content": combined_text}]
+        result = await parse_message(discord_id, combined_text, history)
+
+        if not result:
+            await interaction.followup.send("❌ AI 解析失敗，請稍後再試。")
+            return
+
+        intent = result.get("intent")
+
+        if intent == "add_event":
+            event = result.get("event", {})
+            try:
+                start = datetime.fromisoformat(event["start"])
+                end = datetime.fromisoformat(event["end"])
+                add_event(
+                    calendar_id=target["calendar_id"],
+                    title=event["title"],
+                    start=start,
+                    end=end,
+                    description=event.get("note", ""),
+                )
+                embed = discord.Embed(
+                    title=f"✅ 已幫 {target['name']} 加入行程", color=0x2ECC71
+                )
+                embed.add_field(name="事件", value=event["title"], inline=False)
+                embed.add_field(name="對象", value=target["name"], inline=True)
+                embed.add_field(
+                    name="開始",
+                    value=start.strftime("%m/%d (%a) %H:%M"),
+                    inline=True,
+                )
+                embed.add_field(
+                    name="結束", value=end.strftime("%H:%M"), inline=True
+                )
+                await interaction.followup.send(embed=embed)
+            except Exception as e:
+                await interaction.followup.send(f"❌ 新增失敗：{e}")
+
+        elif intent == "add_fixed":
+            fixed = result.get("fixed", {})
+            try:
+                DAY_NAMES = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
+                days = fixed.get("days", [])
+                for day in days:
+                    add_fixed_schedule(
+                        member_id=target["id"],
+                        title=fixed["title"],
+                        day_of_week=day,
+                        start_time=fixed["start_time"],
+                        end_time=fixed["end_time"],
+                    )
+                day_str = "、".join(DAY_NAMES[d] for d in sorted(days))
+                await interaction.followup.send(
+                    f"✅ 已幫 {target['name']} 新增固定行程：**{fixed['title']}**\n"
+                    f"📅 {day_str}  {fixed['start_time']}–{fixed['end_time']}"
+                )
+            except Exception as e:
+                await interaction.followup.send(f"❌ 新增失敗：{e}")
+
+        elif intent == "ask":
+            await interaction.followup.send(f"🤔 {result['context']}")
+
+        else:
+            await interaction.followup.send(
+                f"❌ {result.get('message', result.get('context', '未知錯誤'))}"
+            )
 
 
 async def setup(bot):

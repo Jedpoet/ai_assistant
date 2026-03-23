@@ -62,6 +62,14 @@ def get_member(discord_id: str) -> sqlite3.Row | None:
         ).fetchone()
 
 
+def get_member_by_name(name: str) -> sqlite3.Row | None:
+    """以名字查詢家人（模糊比對，不分大小寫）"""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM members WHERE name=? COLLATE NOCASE", (name,)
+        ).fetchone()
+
+
 def get_all_members() -> list[sqlite3.Row]:
     with get_conn() as conn:
         return conn.execute("SELECT * FROM members ORDER BY id").fetchall()

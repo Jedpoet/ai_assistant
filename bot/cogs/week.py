@@ -4,7 +4,7 @@ from discord import app_commands
 from datetime import date, timedelta, datetime
 import io
 from db.database import get_all_members, get_fixed_schedules
-from calendar.gcal import get_events_for_week
+from gcal.gcal import get_events_for_week
 from image.week_chart import generate_week_image
 
 

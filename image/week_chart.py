@@ -1,14 +1,16 @@
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.patches import FancyBboxPatch
 from datetime import date, timedelta, datetime
 import io
+from matplotlib import patheffects as path_effects
 
 DAY_LABELS = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
-HOUR_START = 7   # 圖表顯示從幾點開始
-HOUR_END   = 23  # 圖表顯示到幾點結束
+HOUR_START = 7  # 圖表顯示從幾點開始
+HOUR_END = 23  # 圖表顯示到幾點結束
 
 
 def _time_to_hour(time_str: str) -> float:
@@ -36,23 +38,28 @@ def generate_week_image(members: list[dict], week_start: date) -> bytes:
     ]
     回傳 PNG bytes。
     """
-    fig, ax = plt.subplots(figsize=(14, 10))
-    fig.patch.set_facecolor("#F8F9FA")
-    ax.set_facecolor("#F8F9FA")
+    plt.rcParams["font.sans-serif"] = ["Microsoft JhengHei"]
+    plt.rcParams["axes.unicode_minus"] = False
+    fig, ax = plt.subplots(figsize=(10, 16))
+    fig.patch.set_facecolor("#F0F2F5")
+    ax.set_facecolor("#F0F2F5")
 
     num_days = 7
     hour_range = HOUR_END - HOUR_START
 
     # 格線
     for d in range(num_days + 1):
-        ax.axvline(x=d, color="#DEE2E6", linewidth=0.8)
+        ax.axvline(x=d, color="#CED4DA", linewidth=1.0)
     for h in range(hour_range + 1):
-        ax.axhline(y=h, color="#DEE2E6", linewidth=0.5)
+        ax.axhline(y=h, color="#CED4DA", linewidth=0.5)
 
     # 時間軸標籤
     ax.set_yticks(range(hour_range + 1))
-    ax.set_yticklabels([f"{HOUR_START + h:02d}:00" for h in range(hour_range + 1)],
-                       fontsize=8, color="#6C757D")
+    ax.set_yticklabels(
+        [f"{HOUR_START + h:02d}:00" for h in range(hour_range + 1)],
+        fontsize=11,
+        color="#212529",
+    )
     ax.yaxis.set_tick_params(length=0)
 
     # 日期欄標籤
@@ -61,7 +68,7 @@ def generate_week_image(members: list[dict], week_start: date) -> bytes:
     for d in range(num_days):
         day = week_start + timedelta(days=d)
         day_labels.append(f"{DAY_LABELS[d]}\n{day.month}/{day.day}")
-    ax.set_xticklabels(day_labels, fontsize=9, fontweight="bold", color="#343A40")
+    ax.set_xticklabels(day_labels, fontsize=11, fontweight="bold", color="#4A90D9")
     ax.xaxis.set_tick_params(length=0)
 
     ax.set_xlim(0, num_days)
@@ -69,17 +76,17 @@ def generate_week_image(members: list[dict], week_start: date) -> bytes:
 
     # 每個家人的事件（多人同天稍微錯開）
     member_count = len(members)
-    bar_width = 0.8 / max(member_count, 1)
+    bar_width = 0.82 / max(member_count, 1)
 
     for m_idx, member in enumerate(members):
         color = member.get("color", "#4A90D9")
-        x_offset = 0.1 + m_idx * bar_width
+        x_offset = 0.09 + m_idx * bar_width
 
         for event in member.get("events", []):
             d = event["day"]  # 0=週一
             y_start = _time_to_hour(event["start"]) - HOUR_START
-            y_end   = _time_to_hour(event["end"])   - HOUR_START
-            height  = y_end - y_start
+            y_end = _time_to_hour(event["end"]) - HOUR_START
+            height = y_end - y_start
 
             if height <= 0:
                 continue
@@ -91,22 +98,36 @@ def generate_week_image(members: list[dict], week_start: date) -> bytes:
                 boxstyle="round,pad=0.02",
                 facecolor=color,
                 edgecolor="white",
-                linewidth=1,
-                alpha=0.85,
+                linewidth=1.5,
+                alpha=1.0,
                 zorder=3,
             )
             ax.add_patch(rect)
 
             # 事件標題
-            font_size = 7 if height < 0.6 else 8
-            label = f"{member['name']}\n{event['title']}" if member_count > 1 else event['title']
-            ax.text(
+            font_size = 9 if height < 0.6 else 11
+            label = (
+                f"{member['name']}\n{event['title']}"
+                if member_count > 1
+                else event["title"]
+            )
+            txt = ax.text(
                 d + x_offset + (bar_width - 0.04) / 2,
                 y_start + height / 2,
                 label,
-                ha="center", va="center",
-                fontsize=font_size, color="white", fontweight="bold",
-                clip_on=True, zorder=4,
+                ha="center",
+                va="center",
+                fontsize=font_size,
+                color="black",
+                fontweight="bold",
+                clip_on=True,
+                zorder=4,
+            )
+            txt.set_path_effects(
+                [
+                    path_effects.Stroke(linewidth=2, foreground="black", alpha=0.45),
+                    path_effects.Normal(),
+                ]
             )
 
     # 今天高亮
@@ -117,17 +138,25 @@ def generate_week_image(members: list[dict], week_start: date) -> bytes:
 
     # 圖例
     legend_patches = [
-        mpatches.Patch(color=m["color"], label=m["name"], alpha=0.85)
-        for m in members
+        mpatches.Patch(color=m["color"], label=m["name"], alpha=0.85) for m in members
     ]
-    ax.legend(handles=legend_patches, loc="upper right",
-              framealpha=0.9, fontsize=9, title="家人")
+    ax.legend(
+        handles=legend_patches,
+        loc="upper right",
+        framealpha=0.95,
+        fontsize=11,
+        title="家人",
+        title_fontsize=11,
+    )
 
     # 標題
     week_end = week_start + timedelta(days=6)
     ax.set_title(
         f"家庭週行程  {week_start.month}/{week_start.day} – {week_end.month}/{week_end.day}",
-        fontsize=13, fontweight="bold", color="#212529", pad=12
+        fontsize=15,
+        fontweight="bold",
+        color="#212529",
+        pad=14,
     )
 
     for spine in ax.spines.values():
@@ -136,7 +165,7 @@ def generate_week_image(members: list[dict], week_start: date) -> bytes:
     plt.tight_layout()
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.savefig(buf, format="png", dpi=200, bbox_inches="tight")
     plt.close(fig)
     buf.seek(0)
     return buf.read()

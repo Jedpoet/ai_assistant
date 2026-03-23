@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+data/family.db
+.env
+token.json
+credentials.json

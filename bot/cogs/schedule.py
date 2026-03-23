@@ -5,13 +5,19 @@ from discord import app_commands
 from datetime import datetime
 from db.database import (
     get_member,
+    get_member_by_name,
     add_fixed_schedule,
     get_fixed_schedules,
     delete_fixed_schedule,
 )
 from scheduler.ai import parse_message
-from calendar.gcal import add_event
+from gcal.gcal import add_event
 from dotenv import load_dotenv
+import logging
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 
 load_dotenv()
 
@@ -58,7 +64,7 @@ class ScheduleCog(commands.Cog):
         async with message.channel.typing():
             history = _sessions.get(discord_id, [])
             history.append({"role": "user", "content": text})
-            result = parse_message(discord_id, text, history)
+            result = await parse_message(discord_id, text, history)
 
         await self._handle_result(message, discord_id, member, result, history)
 
@@ -71,6 +77,20 @@ class ScheduleCog(commands.Cog):
         history: list[dict],
     ):
         intent = result.get("intent")
+        print("member: ", member)
+
+        # ── 解析 for_member：決定目標家人 ──
+        target_member = member  # 預設為自己
+        for_name = result.get("for_member")
+        if for_name:
+            found = get_member_by_name(for_name)
+            if not found:
+                await message.reply(
+                    f"❌ 找不到叫「{for_name}」的家人，請確認名字後再試一次。\n"
+                    f"💡 提示：用 `/members` 查看所有已註冊的家人。"
+                )
+                return
+            target_member = found
 
         # ── 一次性事件 ──
         if intent == "add_event":
@@ -79,7 +99,7 @@ class ScheduleCog(commands.Cog):
                 start = datetime.fromisoformat(event["start"])
                 end = datetime.fromisoformat(event["end"])
                 add_event(
-                    calendar_id=member["calendar_id"],
+                    calendar_id=target_member["calendar_id"],
                     title=event["title"],
                     start=start,
                     end=end,
@@ -87,8 +107,14 @@ class ScheduleCog(commands.Cog):
                 )
                 _sessions.pop(discord_id, None)  # 任務完成，清除對話
 
-                embed = discord.Embed(title="✅ 行程已加入", color=0x2ECC71)
+                title_text = "✅ 行程已加入"
+                if for_name:
+                    title_text = f"✅ 已幫 {target_member['name']} 加入行程"
+
+                embed = discord.Embed(title=title_text, color=0x2ECC71)
                 embed.add_field(name="事件", value=event["title"], inline=False)
+                if for_name:
+                    embed.add_field(name="對象", value=target_member["name"], inline=True)
                 embed.add_field(
                     name="開始", value=start.strftime("%m/%d (%a) %H:%M"), inline=True
                 )
@@ -107,7 +133,7 @@ class ScheduleCog(commands.Cog):
                 days = fixed.get("days", [])
                 for day in days:
                     add_fixed_schedule(
-                        member_id=member["id"],
+                        member_id=target_member["id"],
                         title=fixed["title"],
                         day_of_week=day,
                         start_time=fixed["start_time"],
@@ -116,8 +142,9 @@ class ScheduleCog(commands.Cog):
                 _sessions.pop(discord_id, None)
 
                 day_str = "、".join(DAY_NAMES[d] for d in sorted(days))
+                who = f"（{target_member['name']}）" if for_name else ""
                 await message.reply(
-                    f"✅ 固定行程已新增：**{fixed['title']}**\n"
+                    f"✅ 固定行程已新增{who}：**{fixed['title']}**\n"
                     f"📅 {day_str}  {fixed['start_time']}–{fixed['end_time']}"
                 )
 
@@ -126,13 +153,13 @@ class ScheduleCog(commands.Cog):
 
         # ── 需要追問 ──
         elif intent == "ask":
-            history.append({"role": "assistant", "content": result["question"]})
+            history.append({"role": "assistant", "content": result["context"]})
             _sessions[discord_id] = history
-            await message.reply(f"🤔 {result['question']}")
+            await message.reply(f"🤔 {result['context']}")
 
-        # ── 一般聊天，忽略 ──
-        elif intent == "ignore":
-            pass
+        # ── 一般聊天 ──
+        elif intent == "chat":
+            await message.reply(f"{result['context']}")
 
         # ── 錯誤 ──
         else:
